@@ -1,0 +1,30 @@
+{
+  "name": "pctakip",
+  "version": "1.0.0",
+  "description": "Konya Bilgisayar - Stok, Alım/Satım ve Cari Hesap Yönetim Sistemi",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node --no-warnings --experimental-sqlite server/server.js",
+    "build": "cd client && npm run build",
+    "seed": "node --no-warnings --experimental-sqlite server/db/seed.js"
+  },
+  "keywords": [
+    "stok",
+    "cari",
+    "bilgisayar",
+    "elektronik",
+    "pos",
+    "konya-bilgisayar"
+  ],
+  "author": "Konya Bilgisayar",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "xlsx": "^0.18.5"
+  }
+}
