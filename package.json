@@ -5,7 +5,7 @@
   "main": "server/server.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node -e \"const fs=require('fs'); try{fs.cpSync('dist','client/dist',{recursive:true})}catch(e){}\"",
     "start": "node --no-warnings --experimental-sqlite server/server.js",
     "seed": "node --no-warnings --experimental-sqlite server/db/seed.js"
   },
