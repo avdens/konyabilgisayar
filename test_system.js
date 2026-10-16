@@ -95,7 +95,7 @@ async function runTests() {
   const carilerRes = await req('/cariler', {}, adminToken);
   const customer = carilerRes.data.cariler.find(c => c.type === 'customer' || c.type === 'both');
   assert.ok(customer);
-  const initialBalance = customer.balance_cents;
+  const initialBalance = Number(customer.balance_cents);
 
   // Sell the new product for 12.000 TL, collect 5.000 TL down payment, remaining 7.000 TL added to customer balance
   const saleRes = await req('/sales', {
@@ -124,11 +124,11 @@ async function runTests() {
   // Verify Cari balance updated: balance should increase by exactly 7.000 TL (700.000 kuruş)
   const cariCheck = await req(`/cariler/${customer.id}`, {}, adminToken);
   const expectedBalance = initialBalance + 700000;
-  assert.strictEqual(cariCheck.data.cari.balance_cents, expectedBalance);
+  assert.strictEqual(Number(cariCheck.data.cari.balance_cents), expectedBalance);
   console.log('✓ Müşteri Cari Bakiyesi Hatasız Güncellendi:');
   console.log('  - Önceki Bakiye:', (initialBalance / 100).toLocaleString('tr-TR'), 'TL');
   console.log('  - Kalan Alacak:', (700000 / 100).toLocaleString('tr-TR'), 'TL');
-  console.log('  - Yeni Güncel Bakiye:', (cariCheck.data.cari.balance_cents / 100).toLocaleString('tr-TR'), 'TL');
+  console.log('  - Yeni Güncel Bakiye:', (Number(cariCheck.data.cari.balance_cents) / 100).toLocaleString('tr-TR'), 'TL');
 
   // 7. Cari Chronological Statement (Ekstre)
   console.log('\n7. Cari Hesap Ekstresi (Yürüyen Bakiye) Test Ediliyor...');
@@ -154,8 +154,8 @@ async function runTests() {
   console.log('✓ 3.000 TL Tahsilat Yapıldı. Makbuz No:', paymentRes.data.receiptNo);
 
   const cariAfterPay = await req(`/cariler/${customer.id}`, {}, adminToken);
-  assert.strictEqual(cariAfterPay.data.cari.balance_cents, expectedBalance - 300000);
-  console.log('✓ Kalan Müşteri Alacağı:', (cariAfterPay.data.cari.balance_cents / 100).toLocaleString('tr-TR'), 'TL (3.000 TL düştü)');
+  assert.strictEqual(Number(cariAfterPay.data.cari.balance_cents), expectedBalance - 300000);
+  console.log('✓ Kalan Müşteri Alacağı:', (Number(cariAfterPay.data.cari.balance_cents) / 100).toLocaleString('tr-TR'), 'TL (3.000 TL düştü)');
 
   // 9. Operating Expense Entry
   console.log('\n9. Masraf Yönetimi Test Ediliyor...');

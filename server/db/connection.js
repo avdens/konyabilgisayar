@@ -133,7 +133,8 @@ const db = {
           let pgSql = toPgSql(sql);
           const isInsert = /^\s*INSERT\s+INTO\b/i.test(pgSql);
           const hasReturning = /\bRETURNING\b/i.test(pgSql);
-          if (isInsert && !hasReturning) {
+          const isSettings = /\bINTO\s+settings\b/i.test(pgSql);
+          if (isInsert && !hasReturning && !isSettings) {
             pgSql += ' RETURNING id';
           }
           const flatParams = params.flat ? params.flat() : params;

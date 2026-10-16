@@ -94,8 +94,8 @@ router.get('/comprehensive', authenticateToken, async (req, res) => {
         COALESCE(SUM(p.estimated_sale_price_cents), 0) as total_estimated_value
       FROM categories c
       LEFT JOIN products p ON p.category_id = c.id AND p.status = 'in_stock' AND p.is_deleted = 0
-      GROUP BY c.id
-      HAVING in_stock_count > 0
+      GROUP BY c.id, c.name
+      HAVING COUNT(p.id) > 0
       ORDER BY total_cost DESC
     `).all();
 
@@ -129,17 +129,19 @@ router.get('/comprehensive', authenticateToken, async (req, res) => {
 
     // 8. En Çok İşlem Yapılan Cariler (Alış + Satış hacmi)
     const topCariler = await db.prepare(`
-      SELECT 
-        c.id,
-        c.code,
-        c.name,
-        c.type,
-        c.phone,
-        c.balance_cents,
-        COALESCE((SELECT SUM(s.total_amount_cents) FROM sales s WHERE s.cari_id = c.id AND ${dateFilterSales}), 0) as total_sales_volume,
-        COALESCE((SELECT SUM(p.total_amount_cents) FROM purchases p WHERE p.cari_id = c.id AND ${dateFilterPurchases}), 0) as total_purchases_volume
-      FROM cariler c
-      WHERE c.is_deleted = 0
+      SELECT * FROM (
+        SELECT 
+          c.id,
+          c.code,
+          c.name,
+          c.type,
+          c.phone,
+          c.balance_cents,
+          COALESCE((SELECT SUM(s.total_amount_cents) FROM sales s WHERE s.cari_id = c.id AND ${dateFilterSales}), 0) as total_sales_volume,
+          COALESCE((SELECT SUM(p.total_amount_cents) FROM purchases p WHERE p.cari_id = c.id AND ${dateFilterPurchases}), 0) as total_purchases_volume
+        FROM cariler c
+        WHERE c.is_deleted = 0
+      ) sub
       ORDER BY (total_sales_volume + total_purchases_volume) DESC
       LIMIT 10
     `).all(...paramsSales, ...paramsPurchases);
