@@ -1,12 +1,13 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { seedDatabase } = require('./db/seed');
 
-// Run seed if database is new
+// Run seed if database is new (safely catch any cold-start errors)
 seedDatabase().catch(err => {
-  console.error('Seed check failed:', err.message);
+  console.log('[Seed] Info:', err.message);
 });
 
 const app = express();
@@ -26,26 +27,18 @@ if (!fs.existsSync(uploadsDir)) {
     // Read-only filesystem in some serverless runtimes
   }
 }
-app.use('/uploads', express.static(uploadsDir));
+app.use(['/api/uploads', '/uploads'], express.static(uploadsDir));
 
-// API Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/dashboard', require('./routes/dashboard'));
-app.use('/api/products', require('./routes/products'));
-app.use('/api/categories', require('./routes/categories'));
-app.use('/api/cariler', require('./routes/cariler'));
-app.use('/api/purchases', require('./routes/purchases'));
-app.use('/api/sales', require('./routes/sales'));
-app.use('/api/payments', require('./routes/payments'));
-app.use('/api/expenses', require('./routes/expenses'));
-app.use('/api/reports', require('./routes/reports'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/trash', require('./routes/trash'));
-app.use('/api/audit', require('./routes/audit'));
-app.use('/api/settings', require('./routes/settings'));
+// URL normalizer for Vercel serverless functions
+app.use((req, res, next) => {
+  if (req.query && req.query.path && !req.url.startsWith('/api/')) {
+    req.url = '/api/' + req.query.path;
+  }
+  next();
+});
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
+app.get(['/api/health', '/health', '/api'], (req, res) => {
   res.json({
     status: 'ok',
     store: 'KONYA BİLGİSAYAR',
@@ -55,21 +48,55 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Serve frontend build if present (for single port local development or monolithic serving)
-const distCandidates = [
-  path.join(__dirname, '../dist'),
-  path.join(__dirname, '../client/dist')
+// Register all API routes on both /api/<prefix> and /<prefix> for 100% routing resilience
+const routes = [
+  ['/auth', require('./routes/auth')],
+  ['/dashboard', require('./routes/dashboard')],
+  ['/products', require('./routes/products')],
+  ['/categories', require('./routes/categories')],
+  ['/cariler', require('./routes/cariler')],
+  ['/purchases', require('./routes/purchases')],
+  ['/sales', require('./routes/sales')],
+  ['/payments', require('./routes/payments')],
+  ['/expenses', require('./routes/expenses')],
+  ['/reports', require('./routes/reports')],
+  ['/users', require('./routes/users')],
+  ['/trash', require('./routes/trash')],
+  ['/audit', require('./routes/audit')],
+  ['/settings', require('./routes/settings')]
 ];
-const clientDist = distCandidates.find(d => fs.existsSync(d));
-if (clientDist) {
-  app.use(express.static(clientDist));
-  app.use((req, res, next) => {
-    if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
-      return res.sendFile(path.join(clientDist, 'index.html'));
-    }
-    next();
-  });
+
+for (const [routePath, handler] of routes) {
+  app.use(`/api${routePath}`, handler);
+  app.use(routePath, handler);
 }
+
+// Serve frontend build ONLY if NOT in Vercel serverless environment
+// (On Vercel, static assets and SPA rewrites are handled by Vercel CDN directly from dist/)
+if (!process.env.VERCEL) {
+  const distCandidates = [
+    path.join(__dirname, '../dist'),
+    path.join(__dirname, '../client/dist')
+  ];
+  const clientDist = distCandidates.find(d => fs.existsSync(d));
+  if (clientDist) {
+    app.use(express.static(clientDist));
+    app.use((req, res, next) => {
+      if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
+        return res.sendFile(path.join(clientDist, 'index.html'));
+      }
+      next();
+    });
+  }
+}
+
+// 404 handler for API requests
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `API uç noktası bulunamadı: [${req.method}] ${req.originalUrl || req.url}`
+  });
+});
 
 // Global error handler
 app.use((err, req, res, next) => {

@@ -1,3 +1,4 @@
+require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -10,6 +11,7 @@ let pool = null;
 let sqliteDb = null;
 let dbPath = null;
 let pgInitialized = false;
+let pgInitPromise = null;
 
 if (isPg) {
   const { Pool } = require('pg');
@@ -20,24 +22,43 @@ if (isPg) {
     idleTimeoutMillis: 30000
   });
   console.log('[Database] Connecting to PostgreSQL (Vercel Postgres / Neon)...');
-} else {
-  const { DatabaseSync } = require('node:sqlite');
-  const dataDir = path.join(__dirname, '../data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+} else if (process.env.VERCEL) {
+  console.warn('[Database] POSTGRES_URL not found on Vercel environment. Attempting fallback...');
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const dataDir = '/tmp';
+    dbPath = path.join(dataDir, 'pctakip.db');
+    sqliteDb = new DatabaseSync(dbPath);
+    sqliteDb.exec("PRAGMA journal_mode = WAL;");
+    sqliteDb.exec("PRAGMA foreign_keys = ON;");
+    const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+    sqliteDb.exec(schemaSql);
+    console.log('[Database] Initialized temporary SQLite database in /tmp for Vercel');
+  } catch (err) {
+    console.error('[Database WARNING] SQLite unavailable on Vercel serverless runtime:', err.message);
   }
-  dbPath = path.join(dataDir, 'pctakip.db');
-  sqliteDb = new DatabaseSync(dbPath);
+} else {
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const dataDir = path.join(__dirname, '../data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    dbPath = path.join(dataDir, 'pctakip.db');
+    sqliteDb = new DatabaseSync(dbPath);
 
-  // Enable WAL mode & foreign keys for consistency and ACID compliance
-  sqliteDb.exec("PRAGMA journal_mode = WAL;");
-  sqliteDb.exec("PRAGMA foreign_keys = ON;");
-  sqliteDb.exec("PRAGMA busy_timeout = 5000;");
+    // Enable WAL mode & foreign keys for consistency and ACID compliance
+    sqliteDb.exec("PRAGMA journal_mode = WAL;");
+    sqliteDb.exec("PRAGMA foreign_keys = ON;");
+    sqliteDb.exec("PRAGMA busy_timeout = 5000;");
 
-  // Execute SQLite schema
-  const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  sqliteDb.exec(schemaSql);
-  console.log('[Database] Using local SQLite database (pctakip.db)');
+    // Execute SQLite schema
+    const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+    sqliteDb.exec(schemaSql);
+    console.log('[Database] Using local SQLite database (pctakip.db)');
+  } catch (err) {
+    console.error('[Database] Failed to open local SQLite database:', err.message);
+  }
 }
 
 /**
@@ -57,23 +78,30 @@ function toPgSql(sql) {
  */
 async function ensurePgReady() {
   if (!isPg || pgInitialized) return;
-  try {
-    const res = await pool.query("SELECT to_regclass('public.users') AS tbl;");
-    if (!res.rows[0] || !res.rows[0].tbl) {
-      console.log('[PostgreSQL] Initializing tables from schema.pg.sql...');
-      const schemaPg = fs.readFileSync(path.join(__dirname, 'schema.pg.sql'), 'utf8');
-      await pool.query(schemaPg);
-      console.log('[PostgreSQL] Tables created successfully.');
+  if (!pgInitPromise) {
+    pgInitPromise = (async () => {
+      try {
+        const res = await pool.query("SELECT to_regclass('public.users') AS tbl;");
+        if (!res.rows[0] || !res.rows[0].tbl) {
+          console.log('[PostgreSQL] Initializing tables from schema.pg.sql...');
+          const schemaPg = fs.readFileSync(path.join(__dirname, 'schema.pg.sql'), 'utf8');
+          await pool.query(schemaPg);
+          console.log('[PostgreSQL] Tables created successfully.');
 
-      // Run initial seed data
-      const { seedDatabase } = require('./seed');
-      await seedDatabase();
-      console.log('[PostgreSQL] Seed data loaded successfully.');
-    }
-    pgInitialized = true;
-  } catch (err) {
-    console.error('[PostgreSQL] Error checking/initializing schema:', err.message);
+          // Run initial seed data
+          const { seedDatabase } = require('./seed');
+          await seedDatabase();
+          console.log('[PostgreSQL] Seed data loaded successfully.');
+        }
+        pgInitialized = true;
+      } catch (err) {
+        console.error('[PostgreSQL] Error checking/initializing schema:', err.message);
+      } finally {
+        pgInitPromise = null;
+      }
+    })();
   }
+  await pgInitPromise;
 }
 
 /**
@@ -116,20 +144,24 @@ const db = {
           };
         }
       };
-    } else {
+    } else if (sqliteDb) {
       const stmt = sqliteDb.prepare(sql);
       return {
         all(...params) { return stmt.all(...params); },
         get(...params) { return stmt.get(...params); },
         run(...params) { return stmt.run(...params); }
       };
+    } else {
+      throw new Error('Veritabanı bağlantısı henüz kurulmadı. Lütfen Vercel panelinizden Storage sekmesine girip Postgres (Neon) veritabanı ekleyin.');
     }
   },
   exec(sql) {
     if (isPg) {
       return pool.query(toPgSql(sql));
-    } else {
+    } else if (sqliteDb) {
       return sqliteDb.exec(sql);
+    } else {
+      throw new Error('Veritabanı bağlantısı henüz kurulmadı.');
     }
   }
 };
@@ -154,7 +186,7 @@ async function runInTransaction(fn) {
     } finally {
       client.release();
     }
-  } else {
+  } else if (sqliteDb) {
     sqliteDb.exec('BEGIN IMMEDIATE TRANSACTION;');
     try {
       const result = await fn();
@@ -164,6 +196,8 @@ async function runInTransaction(fn) {
       sqliteDb.exec('ROLLBACK;');
       throw err;
     }
+  } else {
+    throw new Error('Veritabanı bağlantısı henüz kurulmadı.');
   }
 }
 
