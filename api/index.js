@@ -1,3 +1,23 @@
+const Module = require('module');
+const path = require('path');
+
+const candidates = [
+  path.resolve(__dirname, '../node_modules'),
+  path.resolve(__dirname, '../../node_modules'),
+  path.resolve(__dirname, 'node_modules'),
+  path.resolve(__dirname, '../client/node_modules'),
+  path.resolve('/var/task/client/node_modules'),
+  path.resolve('/var/task/node_modules')
+];
+for (const p of candidates) {
+  if (!Module.globalPaths.includes(p)) {
+    Module.globalPaths.push(p);
+  }
+}
+if (typeof Module._initPaths === 'function') {
+  Module._initPaths();
+}
+
 let app;
 let initError = null;
 
