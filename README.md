@@ -147,4 +147,28 @@ PCTAKIP/
 ```
 
 ---
+
+## ☁️ Vercel & Vercel Postgres (Neon) ile Canlıya Alma
+
+Bu proje **Dual-Database** mimarisine sahiptir:
+- **Yerel Ortamda:** Ekstra kurulum gerektirmeden yerel `SQLite` (`pctakip.db`) üzerinde çalışır.
+- **Vercel'de:** `POSTGRES_URL` tanımlandığında otomatik olarak **Vercel Postgres (Neon)** veritabanına bağlanır, tabloları ve demo verileri (`admin`/`admin123`) kendisi otomatik kurar.
+
+### 1. Vercel'e Deploy Etme Adımları
+1. [Vercel Dashboard](https://vercel.com/dashboard) sayfasına gidin.
+2. **"Add New..."** -> **"Project"** butonuna tıklayın.
+3. GitHub deponuzu (`avdens/konyabilgisayar`) seçip **Import** deyin.
+4. Framework Preset: **Vite** veya **Other** olarak kalabilir.
+5. **"Deploy"** butonuna basın.
+
+### 2. Vercel Postgres Veritabanını Bağlama (1 Dakika)
+1. Vercel panelinizde projenizin sayfasına gidin ve üst menüden **"Storage"** sekmesine tıklayın.
+2. **"Create Database"** butonuna tıklayın ve **"Postgres"** (Neon powered) seçeneğini seçin.
+3. Bir isim verin (örn: `konyabilgisayar-db`) ve bölge olarak **Frankfurt (fra1)** seçin.
+4. **"Create"** dedikten sonra açılan ekranda **"Connect Project"** butonuna basarak `konyabilgisayar` projenizi bağlayın.
+5. Vercel, `POSTGRES_URL`, `DATABASE_URL` gibi tüm bağlantı değişkenlerini projenize otomatik olarak tanımlar.
+6. Projenizin **"Deployments"** sekmesine gelip **"Redeploy"** yapın.
+7. Sistem ilk açılışta PostgreSQL tablolarını ve yönetici hesabını otomatik olarak oluşturur!
+
+---
 *Geliştirici: Google Antigravity - KONYA BİLGİSAYAR için özel olarak hazırlanmıştır.*

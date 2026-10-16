@@ -4,7 +4,7 @@ const { db, recalculateCariBalance, logAudit } = require('../db/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/cariler - List cariler with search, filter (customer, supplier, both), and balance filter
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { search, type, balance_status, page = 1, limit = 50 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -52,10 +52,10 @@ router.get('/', authenticateToken, (req, res) => {
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`SELECT COUNT(*) as total FROM cariler c WHERE ${whereSql}`).get(...params);
+    const countRow = await db.prepare(`SELECT COUNT(*) as total FROM cariler c WHERE ${whereSql}`).get(...params);
     const total = countRow ? countRow.total : 0;
 
-    const cariler = db.prepare(`
+    const cariler = await db.prepare(`
       SELECT 
         c.*,
         (SELECT COUNT(*) FROM purchases WHERE cari_id = c.id AND is_deleted = 0) as total_purchases_count,
@@ -82,16 +82,16 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // GET /api/cariler/:id - Single Cari detail with summary stats
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
-    const cari = db.prepare('SELECT * FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
+    const cari = await db.prepare('SELECT * FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
     if (!cari) {
       return res.status(404).json({ success: false, message: 'Cari hesap bulunamadı.' });
     }
 
     // Alış istatistikleri
-    const purchasesStats = db.prepare(`
+    const purchasesStats = await db.prepare(`
       SELECT 
         COUNT(*) as count,
         COALESCE(SUM(total_amount_cents), 0) as total_amount,
@@ -101,7 +101,7 @@ router.get('/:id', authenticateToken, (req, res) => {
     `).get(id);
 
     // Satış istatistikleri
-    const salesStats = db.prepare(`
+    const salesStats = await db.prepare(`
       SELECT 
         COUNT(*) as count,
         COALESCE(SUM(total_amount_cents), 0) as total_amount,
@@ -111,7 +111,7 @@ router.get('/:id', authenticateToken, (req, res) => {
     `).get(id);
 
     // Ödeme & Tahsilat istatistikleri
-    const paymentStats = db.prepare(`
+    const paymentStats = await db.prepare(`
       SELECT 
         COALESCE(SUM(CASE WHEN type = 'collection' THEN amount_cents ELSE 0 END), 0) as total_collections,
         COALESCE(SUM(CASE WHEN type = 'payment' THEN amount_cents ELSE 0 END), 0) as total_payments
@@ -134,16 +134,16 @@ router.get('/:id', authenticateToken, (req, res) => {
 });
 
 // GET /api/cariler/:id/statement - Cari Ekstre (Chronological statement with running balance)
-router.get('/:id/statement', authenticateToken, (req, res) => {
+router.get('/:id/statement', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
-    const cari = db.prepare('SELECT id, code, name, balance_cents FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
+    const cari = await db.prepare('SELECT id, code, name, balance_cents FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
     if (!cari) {
       return res.status(404).json({ success: false, message: 'Cari hesap bulunamadı.' });
     }
 
     // Fetch all transactions for this Cari in ascending order to compute running balance
-    const transactions = db.prepare(`
+    const transactions = await db.prepare(`
       SELECT 
         tx.*,
         u.full_name as user_name
@@ -176,7 +176,7 @@ router.get('/:id/statement', authenticateToken, (req, res) => {
 });
 
 // POST /api/cariler - Create new Cari
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       name,
@@ -196,11 +196,11 @@ router.post('/', authenticateToken, (req, res) => {
     }
 
     // Generate code CR-XXXX (guaranteed unique using max sequence)
-    const maxRow = db.prepare(`SELECT MAX(CAST(SUBSTR(code, 4) AS INTEGER)) as max_seq FROM cariler WHERE code LIKE 'CR-%'`).get();
+    const maxRow = await db.prepare(`SELECT MAX(CAST(SUBSTR(code, 4) AS INTEGER)) as max_seq FROM cariler WHERE code LIKE 'CR-%'`).get();
     const nextNum = (((maxRow && maxRow.max_seq) ? maxRow.max_seq : 0) + 1).toString().padStart(4, '0');
     const nextCode = `CR-${nextNum}`;
 
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO cariler (code, type, name, phone, email, tc_vkn, tax_office, city, district, address, notes, balance_cents, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `).run(
@@ -218,7 +218,7 @@ router.post('/', authenticateToken, (req, res) => {
     );
 
     const newId = result.lastInsertRowid;
-    logAudit(req.user.id, req.user.username, 'CREATE', 'cari', newId, { code: nextCode, name, type }, req);
+    await logAudit(req.user.id, req.user.username, 'CREATE', 'cari', newId, { code: nextCode, name, type }, req);
 
     res.status(201).json({
       success: true,
@@ -232,10 +232,10 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // PUT /api/cariler/:id - Update Cari
-router.put('/:id', authenticateToken, (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
-    const existing = db.prepare('SELECT * FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
+    const existing = await db.prepare('SELECT * FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Cari hesap bulunamadı.' });
     }
@@ -253,7 +253,7 @@ router.put('/:id', authenticateToken, (req, res) => {
       notes
     } = req.body;
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE cariler SET
         name = COALESCE(?, name),
         type = COALESCE(?, type),
@@ -281,7 +281,7 @@ router.put('/:id', authenticateToken, (req, res) => {
       id
     );
 
-    logAudit(req.user.id, req.user.username, 'UPDATE', 'cari', id, { name, type }, req);
+    await logAudit(req.user.id, req.user.username, 'UPDATE', 'cari', id, { name, type }, req);
 
     res.json({ success: true, message: 'Cari hesap bilgileri güncellendi.' });
   } catch (err) {
@@ -290,10 +290,10 @@ router.put('/:id', authenticateToken, (req, res) => {
 });
 
 // DELETE /api/cariler/:id - Soft delete Cari
-router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const existing = db.prepare('SELECT * FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
+    const existing = await db.prepare('SELECT * FROM cariler WHERE id = ? AND is_deleted = 0').get(id);
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Cari hesap bulunamadı.' });
     }
@@ -305,8 +305,8 @@ router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
       });
     }
 
-    db.prepare('UPDATE cariler SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
-    logAudit(req.user.id, req.user.username, 'DELETE', 'cari', id, { name: existing.name, code: existing.code }, req);
+    await db.prepare('UPDATE cariler SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
+    await logAudit(req.user.id, req.user.username, 'DELETE', 'cari', id, { name: existing.name, code: existing.code }, req);
 
     res.json({ success: true, message: 'Cari hesap çöp kutusuna taşındı.' });
   } catch (err) {

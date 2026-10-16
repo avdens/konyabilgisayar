@@ -5,9 +5,9 @@ const { db, dbPath, logAudit } = require('../db/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/settings - Get settings
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const rows = db.prepare('SELECT key, value, description FROM settings').all();
+    const rows = await db.prepare('SELECT key, value, description FROM settings').all();
     const settings = {};
     rows.forEach(r => { settings[r.key] = r.value; });
     res.json({ success: true, settings });
@@ -17,7 +17,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // PUT /api/settings - Update settings (Admin only)
-router.put('/', authenticateToken, requireAdmin, (req, res) => {
+router.put('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { settings } = req.body;
     if (!settings || typeof settings !== 'object') {
@@ -31,10 +31,10 @@ router.put('/', authenticateToken, requireAdmin, (req, res) => {
     `);
 
     for (const [key, val] of Object.entries(settings)) {
-      upsert.run(key, String(val));
+      await upsert.run(key, String(val));
     }
 
-    logAudit(req.user.id, req.user.username, 'UPDATE', 'settings', null, settings, req);
+    await logAudit(req.user.id, req.user.username, 'UPDATE', 'settings', null, settings, req);
 
     res.json({ success: true, message: 'Ayarlar başarıyla kaydedildi.' });
   } catch (err) {
@@ -42,18 +42,24 @@ router.put('/', authenticateToken, requireAdmin, (req, res) => {
   }
 });
 
-// GET /api/settings/backup/download - Download SQLite DB backup file
-router.get('/backup/download', authenticateToken, requireAdmin, (req, res) => {
+// GET /api/settings/backup/download - Download DB backup file
+router.get('/backup/download', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const { isPg } = require('../db/connection');
+    if (isPg || !dbPath || !fs.existsSync(dbPath)) {
+      // In PostgreSQL mode on Vercel, generate full JSON export
+      return res.redirect('/api/settings/backup/json');
+    }
+
     // Checkpoint WAL before backing up to make sure all data is flushed to main file
-    db.exec('PRAGMA wal_checkpoint(FULL);');
+    await db.exec('PRAGMA wal_checkpoint(FULL);');
 
     const filename = `KonyaBilgisayar_Yedek_${new Date().toISOString().substring(0, 10)}.db`;
-    res.download(dbPath, filename, (err) => {
+    res.download(dbPath, filename, async (err) => {
       if (err) {
         console.error('Backup download error:', err);
       } else {
-        logAudit(req.user.id, req.user.username, 'BACKUP', 'system', null, 'Veritabanı yedeği indirildi.', req);
+        await logAudit(req.user.id, req.user.username, 'BACKUP', 'system', null, 'Veritabanı yedeği indirildi.', req);
       }
     });
   } catch (err) {
@@ -62,23 +68,23 @@ router.get('/backup/download', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // GET /api/settings/backup/json - Export all system data as JSON
-router.get('/backup/json', authenticateToken, requireAdmin, (req, res) => {
+router.get('/backup/json', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const backupData = {
       exportDate: new Date().toISOString(),
       company: 'KONYA BİLGİSAYAR',
       version: '1.0.0',
-      settings: db.prepare('SELECT * FROM settings').all(),
-      categories: db.prepare('SELECT * FROM categories').all(),
-      cariler: db.prepare('SELECT * FROM cariler').all(),
-      products: db.prepare('SELECT * FROM products').all(),
-      purchases: db.prepare('SELECT * FROM purchases').all(),
-      purchase_items: db.prepare('SELECT * FROM purchase_items').all(),
-      sales: db.prepare('SELECT * FROM sales').all(),
-      sale_items: db.prepare('SELECT * FROM sale_items').all(),
-      cari_transactions: db.prepare('SELECT * FROM cari_transactions').all(),
-      payments: db.prepare('SELECT * FROM payments').all(),
-      expenses: db.prepare('SELECT * FROM expenses').all()
+      settings: await db.prepare('SELECT * FROM settings').all(),
+      categories: await db.prepare('SELECT * FROM categories').all(),
+      cariler: await db.prepare('SELECT * FROM cariler').all(),
+      products: await db.prepare('SELECT * FROM products').all(),
+      purchases: await db.prepare('SELECT * FROM purchases').all(),
+      purchase_items: await db.prepare('SELECT * FROM purchase_items').all(),
+      sales: await db.prepare('SELECT * FROM sales').all(),
+      sale_items: await db.prepare('SELECT * FROM sale_items').all(),
+      cari_transactions: await db.prepare('SELECT * FROM cari_transactions').all(),
+      payments: await db.prepare('SELECT * FROM payments').all(),
+      expenses: await db.prepare('SELECT * FROM expenses').all()
     };
 
     const filename = `KonyaBilgisayar_JSON_Yedek_${new Date().toISOString().substring(0, 10)}.json`;

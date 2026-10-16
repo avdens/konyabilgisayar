@@ -4,7 +4,7 @@ const { db, logAudit } = require('../db/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/expenses - List expenses with filters & summary
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { category, date_start, date_end, search, page = 1, limit = 25 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -35,10 +35,10 @@ router.get('/', authenticateToken, (req, res) => {
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`SELECT COUNT(*) as total FROM expenses e WHERE ${whereSql}`).get(...params);
+    const countRow = await db.prepare(`SELECT COUNT(*) as total FROM expenses e WHERE ${whereSql}`).get(...params);
     const total = countRow ? countRow.total : 0;
 
-    const expenses = db.prepare(`
+    const expenses = await db.prepare(`
       SELECT 
         e.*,
         u.full_name as user_name
@@ -50,11 +50,11 @@ router.get('/', authenticateToken, (req, res) => {
     `).all(...params, Number(limit), Number(offset));
 
     // Summary by category and total
-    const totalAmount = db.prepare(`
+    const totalAmount = await db.prepare(`
       SELECT COALESCE(SUM(amount_cents), 0) as total_amount FROM expenses e WHERE ${whereSql}
     `).get(...params);
 
-    const categoryBreakdown = db.prepare(`
+    const categoryBreakdown = await db.prepare(`
       SELECT category, COALESCE(SUM(amount_cents), 0) as total_amount, COUNT(*) as count
       FROM expenses e
       WHERE ${whereSql}
@@ -82,7 +82,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // POST /api/expenses - Create expense
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       category,
@@ -105,7 +105,7 @@ router.post('/', authenticateToken, (req, res) => {
 
     // Generate Expense No: MSF-YYYY-XXXX
     const currentYear = new Date().getFullYear();
-    const last = db.prepare('SELECT expense_no FROM expenses WHERE expense_no LIKE ? ORDER BY id DESC LIMIT 1').get(`MSF-${currentYear}-%`);
+    const last = await db.prepare('SELECT expense_no FROM expenses WHERE expense_no LIKE ? ORDER BY id DESC LIMIT 1').get(`MSF-${currentYear}-%`);
     let nextSeq = 1;
     if (last && last.expense_no) {
       const parts = last.expense_no.split('-');
@@ -118,7 +118,7 @@ router.post('/', authenticateToken, (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `);
 
-    const result = insert.run(
+    const result = await insert.run(
       expenseNo,
       category.trim(),
       amountCents,
@@ -130,7 +130,7 @@ router.post('/', authenticateToken, (req, res) => {
 
     const expenseId = result.lastInsertRowid;
 
-    logAudit(req.user.id, req.user.username, 'CREATE', 'expense', expenseId, {
+    await logAudit(req.user.id, req.user.username, 'CREATE', 'expense', expenseId, {
       expense_no: expenseNo,
       category,
       amount_cents: amountCents,
@@ -149,17 +149,17 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // DELETE /api/expenses/:id - Soft delete expense
-router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const expense = db.prepare('SELECT * FROM expenses WHERE id = ? AND is_deleted = 0').get(id);
+    const expense = await db.prepare('SELECT * FROM expenses WHERE id = ? AND is_deleted = 0').get(id);
     if (!expense) {
       return res.status(404).json({ success: false, message: 'Masraf kaydı bulunamadı.' });
     }
 
-    db.prepare('UPDATE expenses SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
+    await db.prepare('UPDATE expenses SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
 
-    logAudit(req.user.id, req.user.username, 'DELETE', 'expense', id, {
+    await logAudit(req.user.id, req.user.username, 'DELETE', 'expense', id, {
       expense_no: expense.expense_no,
       category: expense.category,
       amount_cents: expense.amount_cents

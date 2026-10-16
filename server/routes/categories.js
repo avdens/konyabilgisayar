@@ -4,9 +4,9 @@ const { db, logAudit } = require('../db/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/categories - List all categories with product count
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const categories = db.prepare(`
+    const categories = await db.prepare(`
       SELECT 
         c.*,
         COUNT(CASE WHEN p.status = 'in_stock' AND p.is_deleted = 0 THEN 1 END) as in_stock_count,
@@ -24,7 +24,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // POST /api/categories - Create new category
-router.post('/', authenticateToken, requireAdmin, (req, res) => {
+router.post('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, icon = 'folder' } = req.body;
     if (!name || !name.trim()) {
@@ -36,12 +36,12 @@ router.post('/', authenticateToken, requireAdmin, (req, res) => {
       .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
       .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
 
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO categories (name, slug, icon, created_at)
       VALUES (?, ?, ?, datetime('now', 'localtime'))
     `).run(name.trim(), slug, icon);
 
-    logAudit(req.user.id, req.user.username, 'CREATE', 'category', result.lastInsertRowid, { name }, req);
+    await logAudit(req.user.id, req.user.username, 'CREATE', 'category', result.lastInsertRowid, { name }, req);
 
     res.status(201).json({ success: true, message: 'Kategori başarıyla eklendi.', categoryId: result.lastInsertRowid });
   } catch (err) {

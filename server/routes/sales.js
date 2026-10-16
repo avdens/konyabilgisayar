@@ -4,7 +4,7 @@ const { db, runInTransaction, recalculateCariBalance, logAudit } = require('../d
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/sales - List sales
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { search, cari_id, date_start, date_end, page = 1, limit = 25 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -36,7 +36,7 @@ router.get('/', authenticateToken, (req, res) => {
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`
+    const countRow = await db.prepare(`
       SELECT COUNT(*) as total 
       FROM sales s 
       JOIN cariler c ON s.cari_id = c.id 
@@ -44,7 +44,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get(...params);
     const total = countRow ? countRow.total : 0;
 
-    const sales = db.prepare(`
+    const sales = await db.prepare(`
       SELECT 
         s.*,
         c.name as cari_name,
@@ -81,12 +81,12 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // GET /api/sales/:id - Single sale details with sold products & customer info
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
     const isAdmin = req.user.role === 'admin';
 
-    const sale = db.prepare(`
+    const sale = await db.prepare(`
       SELECT 
         s.*,
         c.name as cari_name,
@@ -106,7 +106,7 @@ router.get('/:id', authenticateToken, (req, res) => {
       return res.status(404).json({ success: false, message: 'Satış kaydı bulunamadı.' });
     }
 
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT 
         si.*,
         pr.product_code,
@@ -140,7 +140,7 @@ router.get('/:id', authenticateToken, (req, res) => {
 });
 
 // POST /api/sales - Create sale (Sell stock items, mark as sold, update Cari ledger in transaction)
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       cari_id,
@@ -148,7 +148,7 @@ router.post('/', authenticateToken, (req, res) => {
       payment_method = 'nakit',
       collected_amount = 0,
       notes,
-      items = [] // array of { product_id, sale_price }
+      items = []
     } = req.body;
 
     if (!cari_id) {
@@ -159,7 +159,7 @@ router.post('/', authenticateToken, (req, res) => {
       return res.status(400).json({ success: false, message: 'Satılacak en az bir ürün seçilmelidir.' });
     }
 
-    const cari = db.prepare('SELECT id, name FROM cariler WHERE id = ? AND is_deleted = 0').get(cari_id);
+    const cari = await db.prepare('SELECT id, name FROM cariler WHERE id = ? AND is_deleted = 0').get(cari_id);
     if (!cari) {
       return res.status(404).json({ success: false, message: 'Müşteri cari kaydı bulunamadı.' });
     }
@@ -170,7 +170,7 @@ router.post('/', authenticateToken, (req, res) => {
     // Verify all selected products are in stock
     const productIds = items.map(i => i.product_id);
     const placeholders = productIds.map(() => '?').join(',');
-    const stockProducts = db.prepare(`
+    const stockProducts = await db.prepare(`
       SELECT id, name, product_code, status, purchase_price_cents 
       FROM products 
       WHERE id IN (${placeholders}) AND is_deleted = 0
@@ -209,10 +209,10 @@ router.post('/', authenticateToken, (req, res) => {
     const remainingCents = totalSaleCents - collectedCents;
 
     // Run transaction
-    const saleResult = runInTransaction(() => {
+    const saleResult = await runInTransaction(async () => {
       // 1. Generate Invoice No: SAT-YYYY-XXXX
       const currentYear = new Date().getFullYear();
-      const lastSale = db.prepare("SELECT invoice_no FROM sales WHERE invoice_no LIKE ? ORDER BY id DESC LIMIT 1").get(`SAT-${currentYear}-%`);
+      const lastSale = await db.prepare("SELECT invoice_no FROM sales WHERE invoice_no LIKE ? ORDER BY id DESC LIMIT 1").get(`SAT-${currentYear}-%`);
       let nextSeq = 1;
       if (lastSale && lastSale.invoice_no) {
         const parts = lastSale.invoice_no.split('-');
@@ -230,7 +230,7 @@ router.post('/', authenticateToken, (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       `);
 
-      const sRes = insertSale.run(
+      const sRes = await insertSale.run(
         invoiceNo,
         cari_id,
         sDate,
@@ -265,13 +265,13 @@ router.post('/', authenticateToken, (req, res) => {
         const costCents = Number(prod.purchase_price_cents || 0);
         const profitCents = salePriceCents - costCents;
 
-        insertSaleItem.run(saleId, item.product_id, salePriceCents, costCents, profitCents);
-        updateProduct.run(saleId, salePriceCents, cari_id, item.product_id);
+        await insertSaleItem.run(saleId, item.product_id, salePriceCents, costCents, profitCents);
+        await updateProduct.run(saleId, salePriceCents, cari_id, item.product_id);
       }
 
       // 4. Cari Hareketleri:
       // A) Satış Yapıldı -> Cari Borçlandı (debt_cents: totalSaleCents)
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO cari_transactions (cari_id, type, ref_type, ref_id, document_no, debt_cents, credit_cents, date, description, user_id, created_at)
         VALUES (?, 'sale', 'sales', ?, ?, ?, 0, ?, ?, ?, datetime('now', 'localtime'))
       `).run(
@@ -286,7 +286,7 @@ router.post('/', authenticateToken, (req, res) => {
 
       // B) Satış Sırasında Tahsilat Yapıldıysa -> Cari Alacaklandı (credit_cents: collectedCents)
       if (collectedCents > 0) {
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO cari_transactions (cari_id, type, ref_type, ref_id, document_no, debt_cents, credit_cents, date, description, user_id, created_at)
           VALUES (?, 'collection_received', 'sales', ?, ?, 0, ?, ?, ?, ?, datetime('now', 'localtime'))
         `).run(
@@ -301,9 +301,9 @@ router.post('/', authenticateToken, (req, res) => {
       }
 
       // 5. Cari Güncel Bakiyesini Yeniden Hesapla
-      const newBalance = recalculateCariBalance(cari_id);
+      const newBalance = await recalculateCariBalance(cari_id);
 
-      logAudit(req.user.id, req.user.username, 'CREATE', 'sale', saleId, {
+      await logAudit(req.user.id, req.user.username, 'CREATE', 'sale', saleId, {
         invoice_no: invoiceNo,
         cari_name: cari.name,
         total_cents: totalSaleCents,
@@ -329,22 +329,22 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // DELETE /api/sales/:id - Cancel sale (Soft delete, return products to 'in_stock', revert cari ledger)
-router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const sale = db.prepare('SELECT * FROM sales WHERE id = ? AND is_deleted = 0').get(id);
+    const sale = await db.prepare('SELECT * FROM sales WHERE id = ? AND is_deleted = 0').get(id);
     if (!sale) {
       return res.status(404).json({ success: false, message: 'Satış kaydı bulunamadı.' });
     }
 
-    runInTransaction(() => {
+    await runInTransaction(async () => {
       // 1. Soft delete sale
-      db.prepare('UPDATE sales SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
+      await db.prepare('UPDATE sales SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
 
       // 2. Return sold products back to 'in_stock'
-      const items = db.prepare('SELECT product_id FROM sale_items WHERE sale_id = ?').all(id);
+      const items = await db.prepare('SELECT product_id FROM sale_items WHERE sale_id = ?').all(id);
       for (const item of items) {
-        db.prepare(`
+        await db.prepare(`
           UPDATE products 
           SET status = 'in_stock', sold_sale_id = NULL, sold_at = NULL, sold_price_cents = NULL, sold_cari_id = NULL, updated_at = datetime('now', 'localtime')
           WHERE id = ?
@@ -352,16 +352,16 @@ router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
       }
 
       // 3. Soft delete cari transactions
-      db.prepare(`
+      await db.prepare(`
         UPDATE cari_transactions 
         SET is_deleted = 1 
         WHERE ref_type = 'sales' AND ref_id = ?
       `).run(id);
 
       // 4. Recalculate Cari balance
-      recalculateCariBalance(sale.cari_id);
+      await recalculateCariBalance(sale.cari_id);
 
-      logAudit(req.user.id, req.user.username, 'DELETE', 'sale', id, {
+      await logAudit(req.user.id, req.user.username, 'DELETE', 'sale', id, {
         invoice_no: sale.invoice_no,
         total_cents: sale.total_amount_cents
       }, req);

@@ -4,7 +4,7 @@ const { db } = require('../db/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/audit - List audit logs (Admin only)
-router.get('/', authenticateToken, requireAdmin, (req, res) => {
+router.get('/', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { action, entity_type, search, page = 1, limit = 50 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -30,10 +30,10 @@ router.get('/', authenticateToken, requireAdmin, (req, res) => {
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`SELECT COUNT(*) as total FROM audit_logs WHERE ${whereSql}`).get(...params);
+    const countRow = await db.prepare(`SELECT COUNT(*) as total FROM audit_logs WHERE ${whereSql}`).get(...params);
     const total = countRow ? countRow.total : 0;
 
-    const logs = db.prepare(`
+    const logs = await db.prepare(`
       SELECT *
       FROM audit_logs
       WHERE ${whereSql}

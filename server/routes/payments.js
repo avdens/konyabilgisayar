@@ -4,7 +4,7 @@ const { db, runInTransaction, recalculateCariBalance, logAudit } = require('../d
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/payments - List payments & collections with filters
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { cari_id, type, date_start, date_end, payment_method, page = 1, limit = 25 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -39,7 +39,7 @@ router.get('/', authenticateToken, (req, res) => {
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`
+    const countRow = await db.prepare(`
       SELECT COUNT(*) as total 
       FROM payments p 
       JOIN cariler c ON p.cari_id = c.id 
@@ -47,7 +47,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get(...params);
     const total = countRow ? countRow.total : 0;
 
-    const payments = db.prepare(`
+    const payments = await db.prepare(`
       SELECT 
         p.*,
         c.name as cari_name,
@@ -63,7 +63,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).all(...params, Number(limit), Number(offset));
 
     // Summary totals for the filtered results
-    const summary = db.prepare(`
+    const summary = await db.prepare(`
       SELECT 
         COALESCE(SUM(CASE WHEN p.type = 'collection' THEN p.amount_cents ELSE 0 END), 0) as total_collections,
         COALESCE(SUM(CASE WHEN p.type = 'payment' THEN p.amount_cents ELSE 0 END), 0) as total_payments
@@ -89,7 +89,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // POST /api/payments - Create payment (Ödeme) or collection (Tahsilat)
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       cari_id,
@@ -113,18 +113,18 @@ router.post('/', authenticateToken, (req, res) => {
       return res.status(400).json({ success: false, message: 'Tutar 0\'dan büyük olmalıdır.' });
     }
 
-    const cari = db.prepare('SELECT id, name FROM cariler WHERE id = ? AND is_deleted = 0').get(cari_id);
+    const cari = await db.prepare('SELECT id, name FROM cariler WHERE id = ? AND is_deleted = 0').get(cari_id);
     if (!cari) {
       return res.status(404).json({ success: false, message: 'Cari hesap bulunamadı.' });
     }
 
     const txnDate = date || new Date().toISOString().substring(0, 10);
 
-    const paymentResult = runInTransaction(() => {
+    const paymentResult = await runInTransaction(async () => {
       // 1. Generate Receipt No: THS-YYYY-XXXX (Tahsilat) or ODM-YYYY-XXXX (Ödeme)
       const prefix = type === 'collection' ? 'THS' : 'ODM';
       const currentYear = new Date().getFullYear();
-      const last = db.prepare(`SELECT receipt_no FROM payments WHERE receipt_no LIKE ? ORDER BY id DESC LIMIT 1`).get(`${prefix}-${currentYear}-%`);
+      const last = await db.prepare(`SELECT receipt_no FROM payments WHERE receipt_no LIKE ? ORDER BY id DESC LIMIT 1`).get(`${prefix}-${currentYear}-%`);
       let nextSeq = 1;
       if (last && last.receipt_no) {
         const parts = last.receipt_no.split('-');
@@ -138,7 +138,7 @@ router.post('/', authenticateToken, (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `);
 
-      const pRes = insertPayment.run(
+      const pRes = await insertPayment.run(
         receiptNo,
         cari_id,
         type,
@@ -159,7 +159,7 @@ router.post('/', authenticateToken, (req, res) => {
       const txType = type === 'payment' ? 'payment_made' : 'collection_received';
       const label = type === 'payment' ? 'Tedarikçiye Ödeme' : 'Müşteriden Tahsilat';
 
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO cari_transactions (cari_id, type, ref_type, ref_id, document_no, debt_cents, credit_cents, date, description, user_id, created_at)
         VALUES (?, ?, 'payments', ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `).run(
@@ -175,9 +175,9 @@ router.post('/', authenticateToken, (req, res) => {
       );
 
       // 4. Recalculate Cari balance
-      const newBalance = recalculateCariBalance(cari_id);
+      const newBalance = await recalculateCariBalance(cari_id);
 
-      logAudit(req.user.id, req.user.username, 'CREATE', 'payment', paymentId, {
+      await logAudit(req.user.id, req.user.username, 'CREATE', 'payment', paymentId, {
         receipt_no: receiptNo,
         type,
         cari_name: cari.name,
@@ -202,20 +202,20 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // DELETE /api/payments/:id - Soft delete payment & reverse cari balance
-router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const payment = db.prepare('SELECT * FROM payments WHERE id = ? AND is_deleted = 0').get(id);
+    const payment = await db.prepare('SELECT * FROM payments WHERE id = ? AND is_deleted = 0').get(id);
     if (!payment) {
       return res.status(404).json({ success: false, message: 'Ödeme/tahsilat kaydı bulunamadı.' });
     }
 
-    runInTransaction(() => {
-      db.prepare('UPDATE payments SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
-      db.prepare('UPDATE cari_transactions SET is_deleted = 1 WHERE ref_type = "payments" AND ref_id = ?').run(id);
-      recalculateCariBalance(payment.cari_id);
+    await runInTransaction(async () => {
+      await db.prepare('UPDATE payments SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
+      await db.prepare('UPDATE cari_transactions SET is_deleted = 1 WHERE ref_type = "payments" AND ref_id = ?').run(id);
+      await recalculateCariBalance(payment.cari_id);
 
-      logAudit(req.user.id, req.user.username, 'DELETE', 'payment', id, {
+      await logAudit(req.user.id, req.user.username, 'DELETE', 'payment', id, {
         receipt_no: payment.receipt_no,
         amount_cents: payment.amount_cents
       }, req);

@@ -46,12 +46,12 @@ router.post('/upload', authenticateToken, upload.single('image'), (req, res) => 
 });
 
 // GET /api/products/search-quick - Fast lookup by Serial or IMEI or barcode
-router.get('/search-quick', authenticateToken, (req, res) => {
+router.get('/search-quick', authenticateToken, async (req, res) => {
   try {
     const q = req.query.q ? req.query.q.trim() : '';
     if (!q) return res.json({ success: true, products: [] });
 
-    const products = db.prepare(`
+    const products = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -84,7 +84,7 @@ router.get('/search-quick', authenticateToken, (req, res) => {
 });
 
 // GET /api/products - List products with filter, search, and pagination
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const {
       search,
@@ -169,7 +169,7 @@ router.get('/', authenticateToken, (req, res) => {
     const whereSql = whereClauses.join(' AND ');
 
     // Total count for pagination
-    const countRow = db.prepare(`
+    const countRow = await db.prepare(`
       SELECT COUNT(*) as total
       FROM products p
       WHERE ${whereSql}
@@ -195,7 +195,7 @@ router.get('/', authenticateToken, (req, res) => {
       LIMIT ? OFFSET ?
     `;
 
-    const products = db.prepare(query).all(...params, Number(limit), Number(offset));
+    const products = await db.prepare(query).all(...params, Number(limit), Number(offset));
 
     const processed = products.map(p => ({
       ...p,
@@ -220,9 +220,9 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // GET /api/products/brands - List unique brands for filters
-router.get('/meta/brands', authenticateToken, (req, res) => {
+router.get('/meta/brands', authenticateToken, async (req, res) => {
   try {
-    const brands = db.prepare(`
+    const brands = await db.prepare(`
       SELECT DISTINCT brand FROM products WHERE is_deleted = 0 AND brand IS NOT NULL AND brand != '' ORDER BY brand ASC
     `).all();
     res.json({ success: true, brands: brands.map(b => b.brand) });
@@ -232,9 +232,9 @@ router.get('/meta/brands', authenticateToken, (req, res) => {
 });
 
 // GET /api/products/:id - Single product detail
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const product = db.prepare(`
+    const product = await db.prepare(`
       SELECT 
         p.*,
         c.name as category_name,
@@ -270,7 +270,7 @@ router.get('/:id', authenticateToken, (req, res) => {
 });
 
 // POST /api/products - Create new product
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       name,
@@ -301,7 +301,7 @@ router.post('/', authenticateToken, (req, res) => {
     const pDate = purchase_date || new Date().toISOString().substring(0, 10);
 
     // Generate product code: URN-XXXX (guaranteed unique using max sequence)
-    const maxRow = db.prepare(`SELECT MAX(CAST(SUBSTR(product_code, 5) AS INTEGER)) as max_seq FROM products WHERE product_code LIKE 'URN-%'`).get();
+    const maxRow = await db.prepare(`SELECT MAX(CAST(SUBSTR(product_code, 5) AS INTEGER)) as max_seq FROM products WHERE product_code LIKE 'URN-%'`).get();
     const nextNum = (((maxRow && maxRow.max_seq) ? maxRow.max_seq : 0) + 1).toString().padStart(4, '0');
     const productCode = `URN-${nextNum}`;
 
@@ -315,7 +315,7 @@ router.post('/', authenticateToken, (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
     `);
 
-    const result = stmt.run(
+    const result = await stmt.run(
       productCode,
       name.trim(),
       category_id,
@@ -338,7 +338,7 @@ router.post('/', authenticateToken, (req, res) => {
 
     const newId = result.lastInsertRowid;
 
-    logAudit(req.user.id, req.user.username, 'CREATE', 'product', newId, {
+    await logAudit(req.user.id, req.user.username, 'CREATE', 'product', newId, {
       product_code: productCode,
       name,
       serial_number,
@@ -358,10 +358,10 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // PUT /api/products/:id - Update product
-router.put('/:id', authenticateToken, (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
-    const existing = db.prepare('SELECT * FROM products WHERE id = ? AND is_deleted = 0').get(id);
+    const existing = await db.prepare('SELECT * FROM products WHERE id = ? AND is_deleted = 0').get(id);
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Ürün bulunamadı.' });
     }
@@ -416,7 +416,7 @@ router.put('/:id', authenticateToken, (req, res) => {
       WHERE id = ?
     `);
 
-    stmt.run(
+    await stmt.run(
       name ? name.trim() : null,
       category_id || null,
       brand ? brand.trim() : null,
@@ -436,7 +436,7 @@ router.put('/:id', authenticateToken, (req, res) => {
       id
     );
 
-    logAudit(req.user.id, req.user.username, 'UPDATE', 'product', id, { name, model, status }, req);
+    await logAudit(req.user.id, req.user.username, 'UPDATE', 'product', id, { name, model, status }, req);
 
     res.json({ success: true, message: 'Ürün bilgileri güncellendi.' });
   } catch (err) {
@@ -445,10 +445,10 @@ router.put('/:id', authenticateToken, (req, res) => {
 });
 
 // DELETE /api/products/:id - Soft delete product (Trash bin)
-router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const existing = db.prepare('SELECT * FROM products WHERE id = ? AND is_deleted = 0').get(id);
+    const existing = await db.prepare('SELECT * FROM products WHERE id = ? AND is_deleted = 0').get(id);
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Ürün bulunamadı.' });
     }
@@ -460,13 +460,13 @@ router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
       });
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE products 
       SET is_deleted = 1, deleted_at = datetime('now', 'localtime') 
       WHERE id = ?
     `).run(id);
 
-    logAudit(req.user.id, req.user.username, 'DELETE', 'product', id, {
+    await logAudit(req.user.id, req.user.username, 'DELETE', 'product', id, {
       product_code: existing.product_code,
       name: existing.name
     }, req);

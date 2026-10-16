@@ -4,12 +4,12 @@ const { db } = require('../db/connection');
 const { authenticateToken } = require('../middleware/auth');
 
 // GET /api/dashboard
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const isAdmin = req.user.role === 'admin';
 
     // 1. Stok Metrikleri (Stokta olan ürünler)
-    const stockStats = db.prepare(`
+    const stockStats = await db.prepare(`
       SELECT 
         COUNT(*) as total_items,
         COALESCE(SUM(purchase_price_cents), 0) as total_cost,
@@ -23,7 +23,7 @@ router.get('/', authenticateToken, (req, res) => {
     const currentMonth = new Date().toISOString().substring(0, 7);
 
     // Bu ay yapılan alışlar
-    const monthlyPurchases = db.prepare(`
+    const monthlyPurchases = await db.prepare(`
       SELECT 
         COUNT(*) as count,
         COALESCE(SUM(total_amount_cents), 0) as total_amount,
@@ -33,7 +33,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get(currentMonth);
 
     // Bu ay yapılan satışlar & brüt kâr
-    const monthlySales = db.prepare(`
+    const monthlySales = await db.prepare(`
       SELECT 
         COUNT(*) as count,
         COALESCE(SUM(total_amount_cents), 0) as total_amount,
@@ -45,7 +45,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get(currentMonth);
 
     // Bu ay yapılan masraflar
-    const monthlyExpenses = db.prepare(`
+    const monthlyExpenses = await db.prepare(`
       SELECT 
         COUNT(*) as count,
         COALESCE(SUM(amount_cents), 0) as total_amount
@@ -59,7 +59,7 @@ router.get('/', authenticateToken, (req, res) => {
     // 3. Toplam Alacak ve Toplam Borç (Cariler tablosundan)
     // Pozitif bakiye = Bizim alacağımız var (Müşteri borçlu)
     // Negatif bakiye = Bizim borcumuz var (Tedarikçiye borçluyuz)
-    const cariBalances = db.prepare(`
+    const cariBalances = await db.prepare(`
       SELECT 
         COALESCE(SUM(CASE WHEN balance_cents > 0 THEN balance_cents ELSE 0 END), 0) as total_receivables,
         COALESCE(SUM(CASE WHEN balance_cents < 0 THEN ABS(balance_cents) ELSE 0 END), 0) as total_payables
@@ -68,7 +68,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get();
 
     // 4. Kategori Bazında Stok Dağılımı
-    const categoryDistribution = db.prepare(`
+    const categoryDistribution = await db.prepare(`
       SELECT 
         c.id,
         c.name,
@@ -83,7 +83,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).all();
 
     // 5. Kritik / Uzun Süredir Satılmayan Ürünler (Stokta 30+ gündür bekleyenler)
-    const slowMovingItems = db.prepare(`
+    const slowMovingItems = await db.prepare(`
       SELECT 
         p.id,
         p.product_code,
@@ -106,7 +106,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).all();
 
     // 6. Son Yapılan Alışlar (Son 5)
-    const recentPurchases = db.prepare(`
+    const recentPurchases = await db.prepare(`
       SELECT 
         p.id,
         p.invoice_no,
@@ -123,7 +123,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).all();
 
     // 7. Son Yapılan Satışlar (Son 5)
-    const recentSales = db.prepare(`
+    const recentSales = await db.prepare(`
       SELECT 
         s.id,
         s.invoice_no,
@@ -141,7 +141,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).all();
 
     // 8. Son Hareketler (Satış, Alış, Ödeme, Tahsilat birleşik zaman akışı)
-    const recentActivities = db.prepare(`
+    const recentActivities = await db.prepare(`
       SELECT * FROM (
         SELECT 
           'sale' as type,

@@ -5,7 +5,7 @@ const { db } = require('../db/connection');
 const { authenticateToken } = require('../middleware/auth');
 
 // GET /api/reports/comprehensive - Comprehensive reports data for date range
-router.get('/comprehensive', authenticateToken, (req, res) => {
+router.get('/comprehensive', authenticateToken, async (req, res) => {
   try {
     const { date_start, date_end } = req.query;
     const isAdmin = req.user.role === 'admin';
@@ -36,7 +36,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     }
 
     // 1. Satış Özeti
-    const salesSummary = db.prepare(`
+    const salesSummary = await db.prepare(`
       SELECT 
         COUNT(*) as total_count,
         COALESCE(SUM(total_amount_cents), 0) as total_revenue,
@@ -49,7 +49,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).get(...paramsSales);
 
     // 2. Alış Özeti
-    const purchasesSummary = db.prepare(`
+    const purchasesSummary = await db.prepare(`
       SELECT 
         COUNT(*) as total_count,
         COALESCE(SUM(total_amount_cents), 0) as total_purchases,
@@ -60,7 +60,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).get(...paramsPurchases);
 
     // 3. Masraf Özeti
-    const expensesSummary = db.prepare(`
+    const expensesSummary = await db.prepare(`
       SELECT 
         COUNT(*) as total_count,
         COALESCE(SUM(amount_cents), 0) as total_expenses
@@ -69,7 +69,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).get(...paramsExpenses);
 
     // Masraf Kategorileri Dağılımı
-    const expensesByCategory = db.prepare(`
+    const expensesByCategory = await db.prepare(`
       SELECT 
         e.category,
         COUNT(*) as count,
@@ -86,7 +86,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     const netProfit = grossProfit - totalExpenses;
 
     // 5. Güncel Stok Durumu & Maliyeti
-    const stockReport = db.prepare(`
+    const stockReport = await db.prepare(`
       SELECT 
         c.name as category_name,
         COUNT(p.id) as in_stock_count,
@@ -100,7 +100,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).all();
 
     // 6. Güncel Borç & Alacak Durumu
-    const debtReceivableReport = db.prepare(`
+    const debtReceivableReport = await db.prepare(`
       SELECT 
         COALESCE(SUM(CASE WHEN balance_cents > 0 THEN balance_cents ELSE 0 END), 0) as total_receivables,
         COALESCE(SUM(CASE WHEN balance_cents < 0 THEN ABS(balance_cents) ELSE 0 END), 0) as total_payables,
@@ -111,7 +111,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).get();
 
     // 7. En Çok Satan Kategoriler
-    const topCategories = db.prepare(`
+    const topCategories = await db.prepare(`
       SELECT 
         c.name as category_name,
         COUNT(si.id) as sold_count,
@@ -128,7 +128,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).all(...paramsSales);
 
     // 8. En Çok İşlem Yapılan Cariler (Alış + Satış hacmi)
-    const topCariler = db.prepare(`
+    const topCariler = await db.prepare(`
       SELECT 
         c.id,
         c.code,
@@ -145,7 +145,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
     `).all(...paramsSales, ...paramsPurchases);
 
     // 9. Günlük Trend Grafiği (Son 14 gün veya aralık içi)
-    const dailySalesTrend = db.prepare(`
+    const dailySalesTrend = await db.prepare(`
       SELECT 
         s.sale_date as date,
         COUNT(s.id) as sales_count,
@@ -198,7 +198,7 @@ router.get('/comprehensive', authenticateToken, (req, res) => {
 });
 
 // GET /api/reports/export/excel - Generates and downloads real Excel (.xlsx) file
-router.get('/export/excel', authenticateToken, (req, res) => {
+router.get('/export/excel', authenticateToken, async (req, res) => {
   try {
     const { date_start, date_end } = req.query;
     const isAdmin = req.user.role === 'admin';
@@ -211,18 +211,18 @@ router.get('/export/excel', authenticateToken, (req, res) => {
     if (date_start) { sWhere += ' AND s.sale_date >= ?'; sParams.push(date_start); }
     if (date_end) { sWhere += ' AND s.sale_date <= ?'; sParams.push(date_end); }
 
-    const sales = db.prepare(`
+    const sales = await db.prepare(`
       SELECT 
-        s.invoice_no as 'Fatura No',
-        s.sale_date as 'Tarih',
-        c.name as 'Müşteri',
-        c.phone as 'Telefon',
-        s.payment_method as 'Ödeme Yöntemi',
-        (s.total_amount_cents / 100.0) as 'Satış Tutarı (TL)',
-        ${isAdmin ? "(s.cost_amount_cents / 100.0) as 'Maliyet (TL)', (s.gross_profit_cents / 100.0) as 'Brüt Kâr (TL)'," : ""}
-        (s.collected_amount_cents / 100.0) as 'Tahsil Edilen (TL)',
-        (s.remaining_amount_cents / 100.0) as 'Kalan Alacak (TL)',
-        s.notes as 'Açıklama'
+        s.invoice_no as "Fatura No",
+        s.sale_date as "Tarih",
+        c.name as "Müşteri",
+        c.phone as "Telefon",
+        s.payment_method as "Ödeme Yöntemi",
+        (s.total_amount_cents / 100.0) as "Satış Tutarı (TL)",
+        ${isAdmin ? '(s.cost_amount_cents / 100.0) as "Maliyet (TL)", (s.gross_profit_cents / 100.0) as "Brüt Kâr (TL)",' : ''}
+        (s.collected_amount_cents / 100.0) as "Tahsil Edilen (TL)",
+        (s.remaining_amount_cents / 100.0) as "Kalan Alacak (TL)",
+        s.notes as "Açıklama"
       FROM sales s
       JOIN cariler c ON s.cari_id = c.id
       WHERE ${sWhere}
@@ -238,17 +238,17 @@ router.get('/export/excel', authenticateToken, (req, res) => {
     if (date_start) { pWhere += ' AND p.purchase_date >= ?'; pParams.push(date_start); }
     if (date_end) { pWhere += ' AND p.purchase_date <= ?'; pParams.push(date_end); }
 
-    const purchases = db.prepare(`
+    const purchases = await db.prepare(`
       SELECT 
-        p.invoice_no as 'Fatura No',
-        p.purchase_date as 'Tarih',
-        c.name as 'Tedarikçi / Cari',
-        c.phone as 'Telefon',
-        p.payment_method as 'Ödeme Yöntemi',
-        (p.total_amount_cents / 100.0) as 'Alış Tutarı (TL)',
-        (p.paid_amount_cents / 100.0) as 'Ödenen Tutar (TL)',
-        (p.remaining_amount_cents / 100.0) as 'Kalan Borç (TL)',
-        p.notes as 'Açıklama'
+        p.invoice_no as "Fatura No",
+        p.purchase_date as "Tarih",
+        c.name as "Tedarikçi / Cari",
+        c.phone as "Telefon",
+        p.payment_method as "Ödeme Yöntemi",
+        (p.total_amount_cents / 100.0) as "Alış Tutarı (TL)",
+        (p.paid_amount_cents / 100.0) as "Ödenen Tutar (TL)",
+        (p.remaining_amount_cents / 100.0) as "Kalan Borç (TL)",
+        p.notes as "Açıklama"
       FROM purchases p
       JOIN cariler c ON p.cari_id = c.id
       WHERE ${pWhere}
@@ -259,21 +259,21 @@ router.get('/export/excel', authenticateToken, (req, res) => {
     XLSX.utils.book_append_sheet(wb, wsPurchases, 'Alışlar');
 
     // 3. Stok Durumu Sayfası
-    const stock = db.prepare(`
+    const stock = await db.prepare(`
       SELECT 
-        p.product_code as 'Ürün Kodu',
-        p.name as 'Ürün Adı',
-        c.name as 'Kategori',
-        p.brand as 'Marka',
-        p.model as 'Model',
-        p.serial_number as 'Seri No',
-        p.imei as 'IMEI',
-        p.condition as 'Durum (Sıfır/2.El)',
-        p.cosmetic_grade as 'Kozmetik Durum',
-        ${isAdmin ? "(p.purchase_price_cents / 100.0) as 'Alış Maliyeti (TL)'," : ""}
-        (p.estimated_sale_price_cents / 100.0) as 'Satış Fiyatı (TL)',
-        p.status as 'Stok Durumu',
-        p.purchase_date as 'Alış Tarihi'
+        p.product_code as "Ürün Kodu",
+        p.name as "Ürün Adı",
+        c.name as "Kategori",
+        p.brand as "Marka",
+        p.model as "Model",
+        p.serial_number as "Seri No",
+        p.imei as "IMEI",
+        p.condition as "Durum (Sıfır/2.El)",
+        p.cosmetic_grade as "Kozmetik Durum",
+        ${isAdmin ? '(p.purchase_price_cents / 100.0) as "Alış Maliyeti (TL)",' : ''}
+        (p.estimated_sale_price_cents / 100.0) as "Satış Fiyatı (TL)",
+        p.status as "Stok Durumu",
+        p.purchase_date as "Alış Tarihi"
       FROM products p
       JOIN categories c ON p.category_id = c.id
       WHERE p.status = 'in_stock' AND p.is_deleted = 0
@@ -289,14 +289,14 @@ router.get('/export/excel', authenticateToken, (req, res) => {
     if (date_start) { eWhere += ' AND e.date >= ?'; eParams.push(date_start); }
     if (date_end) { eWhere += ' AND e.date <= ?'; eParams.push(date_end); }
 
-    const expenses = db.prepare(`
+    const expenses = await db.prepare(`
       SELECT 
-        e.expense_no as 'Fiş No',
-        e.date as 'Tarih',
-        e.category as 'Kategori',
-        (e.amount_cents / 100.0) as 'Tutar (TL)',
-        e.payment_method as 'Ödeme Yöntemi',
-        e.description as 'Açıklama'
+        e.expense_no as "Fiş No",
+        e.date as "Tarih",
+        e.category as "Kategori",
+        (e.amount_cents / 100.0) as "Tutar (TL)",
+        e.payment_method as "Ödeme Yöntemi",
+        e.description as "Açıklama"
       FROM expenses e
       WHERE ${eWhere}
       ORDER BY e.date DESC
@@ -306,19 +306,19 @@ router.get('/export/excel', authenticateToken, (req, res) => {
     XLSX.utils.book_append_sheet(wb, wsExpenses, 'Masraflar');
 
     // 5. Cariler ve Borç/Alacak Sayfası
-    const cariler = db.prepare(`
+    const cariler = await db.prepare(`
       SELECT 
-        c.code as 'Cari Kodu',
-        c.name as 'Firma / Müşteri Adı',
-        c.type as 'Cari Tipi',
-        c.phone as 'Telefon',
-        c.city as 'Şehir',
-        (c.balance_cents / 100.0) as 'Bakiye (TL)',
+        c.code as "Cari Kodu",
+        c.name as "Firma / Müşteri Adı",
+        c.type as "Cari Tipi",
+        c.phone as "Telefon",
+        c.city as "Şehir",
+        (c.balance_cents / 100.0) as "Bakiye (TL)",
         CASE 
           WHEN c.balance_cents > 0 THEN 'Alacağımız Var'
           WHEN c.balance_cents < 0 THEN 'Borcumuz Var'
           ELSE 'Bakiye Sıfır'
-        END as 'Durum'
+        END as "Durum"
       FROM cariler c
       WHERE c.is_deleted = 0
       ORDER BY c.name ASC

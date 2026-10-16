@@ -4,7 +4,7 @@ const { db, runInTransaction, recalculateCariBalance, logAudit } = require('../d
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 // GET /api/purchases - List purchases with search and filters
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const { search, cari_id, date_start, date_end, page = 1, limit = 25 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -35,7 +35,7 @@ router.get('/', authenticateToken, (req, res) => {
 
     const whereSql = whereClauses.join(' AND ');
 
-    const countRow = db.prepare(`
+    const countRow = await db.prepare(`
       SELECT COUNT(*) as total 
       FROM purchases p 
       JOIN cariler c ON p.cari_id = c.id 
@@ -43,7 +43,7 @@ router.get('/', authenticateToken, (req, res) => {
     `).get(...params);
     const total = countRow ? countRow.total : 0;
 
-    const purchases = db.prepare(`
+    const purchases = await db.prepare(`
       SELECT 
         p.*,
         c.name as cari_name,
@@ -74,10 +74,10 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 // GET /api/purchases/:id - Single purchase details with items
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const id = req.params.id;
-    const purchase = db.prepare(`
+    const purchase = await db.prepare(`
       SELECT 
         p.*,
         c.name as cari_name,
@@ -97,7 +97,7 @@ router.get('/:id', authenticateToken, (req, res) => {
       return res.status(404).json({ success: false, message: 'Alış kaydı bulunamadı.' });
     }
 
-    const items = db.prepare(`
+    const items = await db.prepare(`
       SELECT 
         pi.*,
         pr.product_code,
@@ -121,7 +121,7 @@ router.get('/:id', authenticateToken, (req, res) => {
 });
 
 // POST /api/purchases - Create purchase with items inside ACID transaction
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
     const {
       cari_id,
@@ -129,7 +129,7 @@ router.post('/', authenticateToken, (req, res) => {
       payment_method = 'nakit',
       paid_amount = 0,
       notes,
-      items = [] // array of { name, category_id, brand, model, serial_number, imei, condition, cosmetic_grade, specs, purchase_price, estimated_sale_price } OR { existing_product_id, purchase_price }
+      items = []
     } = req.body;
 
     if (!cari_id) {
@@ -140,7 +140,7 @@ router.post('/', authenticateToken, (req, res) => {
       return res.status(400).json({ success: false, message: 'En az bir ürün eklenmelidir.' });
     }
 
-    const cari = db.prepare('SELECT id, name FROM cariler WHERE id = ? AND is_deleted = 0').get(cari_id);
+    const cari = await db.prepare('SELECT id, name FROM cariler WHERE id = ? AND is_deleted = 0').get(cari_id);
     if (!cari) {
       return res.status(404).json({ success: false, message: 'Seçilen cari bulunamadı.' });
     }
@@ -161,10 +161,10 @@ router.post('/', authenticateToken, (req, res) => {
     const remainingCents = totalCents - paidCents;
 
     // Run everything in an immediate transaction
-    const purchaseResult = runInTransaction(() => {
+    const purchaseResult = await runInTransaction(async () => {
       // 1. Generate Invoice No: ALS-YYYY-XXXX
       const currentYear = new Date().getFullYear();
-      const lastPurchase = db.prepare("SELECT invoice_no FROM purchases WHERE invoice_no LIKE ? ORDER BY id DESC LIMIT 1").get(`ALS-${currentYear}-%`);
+      const lastPurchase = await db.prepare("SELECT invoice_no FROM purchases WHERE invoice_no LIKE ? ORDER BY id DESC LIMIT 1").get(`ALS-${currentYear}-%`);
       let nextSeq = 1;
       if (lastPurchase && lastPurchase.invoice_no) {
         const parts = lastPurchase.invoice_no.split('-');
@@ -181,7 +181,7 @@ router.post('/', authenticateToken, (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       `);
 
-      const pRes = insertPurchase.run(
+      const pRes = await insertPurchase.run(
         invoiceNo,
         cari_id,
         pDate,
@@ -216,12 +216,12 @@ router.post('/', authenticateToken, (req, res) => {
         let productId = item.existing_product_id;
         if (!productId) {
           // Create new product with guaranteed unique code
-          const maxRow = db.prepare(`SELECT MAX(CAST(SUBSTR(product_code, 5) AS INTEGER)) as max_seq FROM products WHERE product_code LIKE 'URN-%'`).get();
+          const maxRow = await db.prepare(`SELECT MAX(CAST(SUBSTR(product_code, 5) AS INTEGER)) as max_seq FROM products WHERE product_code LIKE 'URN-%'`).get();
           const nextNum = (((maxRow && maxRow.max_seq) ? maxRow.max_seq : 0) + 1).toString().padStart(4, '0');
           const pCode = `URN-${nextNum}`;
           const estSaleCents = Math.round((Number(item.estimated_sale_price) || 0) * 100);
 
-          const prodRes = insertProduct.run(
+          const prodRes = await insertProduct.run(
             pCode,
             item.name.trim(),
             item.category_id,
@@ -243,19 +243,19 @@ router.post('/', authenticateToken, (req, res) => {
           productId = prodRes.lastInsertRowid;
         } else {
           // If existing product, update supplier and purchase price
-          db.prepare(`
+          await db.prepare(`
             UPDATE products 
             SET supplier_cari_id = ?, purchase_price_cents = ?, purchase_date = ?, status = 'in_stock', updated_at = datetime('now', 'localtime')
             WHERE id = ?
           `).run(cari_id, itemPriceCents, pDate, productId);
         }
 
-        insertPurchaseItem.run(purchaseId, productId, itemPriceCents);
+        await insertPurchaseItem.run(purchaseId, productId, itemPriceCents);
       }
 
       // 4. Cari Hareketleri:
       // A) Mal Alışı -> Cari Alacaklandı (credit_cents: totalCents)
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO cari_transactions (cari_id, type, ref_type, ref_id, document_no, debt_cents, credit_cents, date, description, user_id, created_at)
         VALUES (?, 'purchase', 'purchases', ?, ?, 0, ?, ?, ?, ?, datetime('now', 'localtime'))
       `).run(
@@ -270,7 +270,7 @@ router.post('/', authenticateToken, (req, res) => {
 
       // B) Peşin Ödenen Tutar Varsa -> Cari Borçlandı (debt_cents: paidCents)
       if (paidCents > 0) {
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO cari_transactions (cari_id, type, ref_type, ref_id, document_no, debt_cents, credit_cents, date, description, user_id, created_at)
           VALUES (?, 'payment_made', 'purchases', ?, ?, ?, 0, ?, ?, ?, datetime('now', 'localtime'))
         `).run(
@@ -285,9 +285,9 @@ router.post('/', authenticateToken, (req, res) => {
       }
 
       // 5. Cari Güncel Bakiyesini Yeniden Hesapla
-      const newBalance = recalculateCariBalance(cari_id);
+      const newBalance = await recalculateCariBalance(cari_id);
 
-      logAudit(req.user.id, req.user.username, 'CREATE', 'purchase', purchaseId, {
+      await logAudit(req.user.id, req.user.username, 'CREATE', 'purchase', purchaseId, {
         invoice_no: invoiceNo,
         cari_name: cari.name,
         total_cents: totalCents,
@@ -312,16 +312,16 @@ router.post('/', authenticateToken, (req, res) => {
 });
 
 // DELETE /api/purchases/:id - Cancel purchase (Soft delete and revert cari balance)
-router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const id = req.params.id;
-    const purchase = db.prepare('SELECT * FROM purchases WHERE id = ? AND is_deleted = 0').get(id);
+    const purchase = await db.prepare('SELECT * FROM purchases WHERE id = ? AND is_deleted = 0').get(id);
     if (!purchase) {
       return res.status(404).json({ success: false, message: 'Alış kaydı bulunamadı.' });
     }
 
     // Check if any product from this purchase was already sold
-    const soldItem = db.prepare(`
+    const soldItem = await db.prepare(`
       SELECT pr.name, pr.product_code 
       FROM purchase_items pi
       JOIN products pr ON pi.product_id = pr.id
@@ -335,27 +335,27 @@ router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
       });
     }
 
-    runInTransaction(() => {
+    await runInTransaction(async () => {
       // 1. Soft delete purchase
-      db.prepare('UPDATE purchases SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
+      await db.prepare('UPDATE purchases SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(id);
 
       // 2. Soft delete related products or mark deleted
-      const items = db.prepare('SELECT product_id FROM purchase_items WHERE purchase_id = ?').all(id);
+      const items = await db.prepare('SELECT product_id FROM purchase_items WHERE purchase_id = ?').all(id);
       for (const item of items) {
-        db.prepare('UPDATE products SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(item.product_id);
+        await db.prepare('UPDATE products SET is_deleted = 1, deleted_at = datetime("now", "localtime") WHERE id = ?').run(item.product_id);
       }
 
       // 3. Soft delete cari transactions
-      db.prepare(`
+      await db.prepare(`
         UPDATE cari_transactions 
         SET is_deleted = 1 
         WHERE ref_type = 'purchases' AND ref_id = ?
       `).run(id);
 
       // 4. Recalculate Cari balance
-      recalculateCariBalance(purchase.cari_id);
+      await recalculateCariBalance(purchase.cari_id);
 
-      logAudit(req.user.id, req.user.username, 'DELETE', 'purchase', id, {
+      await logAudit(req.user.id, req.user.username, 'DELETE', 'purchase', id, {
         invoice_no: purchase.invoice_no,
         total_cents: purchase.total_amount_cents
       }, req);

@@ -5,11 +5,9 @@ const fs = require('fs');
 const { seedDatabase } = require('./db/seed');
 
 // Run seed if database is new
-try {
-  seedDatabase();
-} catch (err) {
+seedDatabase().catch(err => {
   console.error('Seed check failed:', err.message);
-}
+});
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -19,10 +17,14 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Static directory for uploaded images
+// Static directory for uploaded images (ephemeral on serverless)
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (e) {
+    // Read-only filesystem in some serverless runtimes
+  }
 }
 app.use('/uploads', express.static(uploadsDir));
 
@@ -48,11 +50,12 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     store: 'KONYA BİLGİSAYAR',
     system: 'Stok + Alım/Satım + Cari Hesap Yönetim Sistemi',
+    db_mode: process.env.POSTGRES_URL ? 'PostgreSQL (Vercel/Neon)' : 'SQLite (Local)',
     time: new Date().toISOString()
   });
 });
 
-// Serve frontend build if present
+// Serve frontend build if present (for single port local development or monolithic serving)
 const clientDist = path.join(__dirname, '../client/dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
@@ -73,10 +76,14 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`====================================================`);
-  console.log(`  KONYA BİLGİSAYAR - STOK & CARİ YÖNETİM SİSTEMİ   `);
-  console.log(`  Sunucu aktif: http://localhost:${PORT}          `);
-  console.log(`  API Uç Noktası: http://localhost:${PORT}/api/health `);
-  console.log(`====================================================`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`====================================================`);
+    console.log(`  KONYA BİLGİSAYAR - STOK & CARİ YÖNETİM SİSTEMİ   `);
+    console.log(`  Sunucu aktif: http://localhost:${PORT}          `);
+    console.log(`  API Uç Noktası: http://localhost:${PORT}/api/health `);
+    console.log(`====================================================`);
+  });
+}
+
+module.exports = app;
