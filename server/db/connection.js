@@ -1,4 +1,4 @@
-require('dotenv').config();
+try { require('dotenv').config(); } catch (e) {}
 const path = require('path');
 const fs = require('fs');
 const { AsyncLocalStorage } = require('node:async_hooks');
