@@ -5,10 +5,12 @@ const path = require('path');
 const fs = require('fs');
 const { seedDatabase } = require('./db/seed');
 
-// Run seed if database is new (safely catch any cold-start errors)
-seedDatabase().catch(err => {
-  console.log('[Seed] Info:', err.message);
-});
+// Run seed on local development if database is new
+if (!process.env.VERCEL) {
+  seedDatabase().catch(err => {
+    console.log('[Seed] Info:', err.message);
+  });
+}
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -18,8 +20,8 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Static directory for uploaded images (ephemeral on serverless)
-const uploadsDir = path.join(__dirname, 'uploads');
+// Static directory for uploaded images (uses /tmp on serverless)
+const uploadsDir = process.env.VERCEL ? '/tmp/uploads' : path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   try {
     fs.mkdirSync(uploadsDir, { recursive: true });

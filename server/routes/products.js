@@ -6,10 +6,14 @@ const fs = require('fs');
 const { db, logAudit } = require('../db/connection');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
-// Multer storage configuration for product images
-const uploadDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// Multer storage configuration for product images (uses /tmp on serverless runtimes)
+const uploadDir = process.env.VERCEL ? '/tmp/uploads' : path.join(__dirname, '../uploads');
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (e) {
+  // Read-only filesystem safeguard for serverless
 }
 
 const storage = multer.diskStorage({
