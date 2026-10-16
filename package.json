@@ -4,8 +4,9 @@
   "description": "Konya Bilgisayar - Stok, Alım/Satım ve Cari Hesap Yönetim Sistemi",
   "main": "server/server.js",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
     "start": "node --no-warnings --experimental-sqlite server/server.js",
-    "build": "npm --prefix client install && npm --prefix client run build && node -e \"const fs = require('fs'); fs.cpSync('dist', 'client/dist', {recursive: true, force: true});\"",
     "seed": "node --no-warnings --experimental-sqlite server/db/seed.js"
   },
   "keywords": [
@@ -24,8 +25,15 @@
     "dotenv": "^18.0.8",
     "express": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.57.0",
     "multer": "^2.4.0",
     "pg": "^8.23.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^6.4.4"
   }
 }
