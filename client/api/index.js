@@ -1,21 +1,33 @@
 const Module = require('module');
 const path = require('path');
 
-const candidates = [
-  path.resolve(__dirname, '../node_modules'),
-  path.resolve(__dirname, '../../node_modules'),
-  path.resolve(__dirname, 'node_modules'),
-  path.resolve('/var/task/client/node_modules'),
-  path.resolve('/var/task/node_modules')
-];
-for (const p of candidates) {
-  if (!Module.globalPaths.includes(p)) {
-    Module.globalPaths.push(p);
+// Ensure all node_modules directories are in search paths for nested modules
+const origNodeModulePaths = Module._nodeModulePaths;
+Module._nodeModulePaths = function(from) {
+  const paths = origNodeModulePaths.call(this, from);
+  const extra = [
+    path.resolve(__dirname, '../node_modules'),
+    path.resolve(__dirname, '../../node_modules'),
+    path.resolve(__dirname, 'node_modules'),
+    path.resolve('/var/task/client/node_modules'),
+    path.resolve('/var/task/node_modules')
+  ];
+  for (const p of extra) {
+    if (!paths.includes(p)) {
+      paths.push(p);
+    }
   }
-}
-if (typeof Module._initPaths === 'function') {
-  Module._initPaths();
-}
+  return paths;
+};
+
+// Explicit static require references to ensure Vercel NFT bundles them
+try { require('express'); } catch (e) {}
+try { require('cors'); } catch (e) {}
+try { require('pg'); } catch (e) {}
+try { require('jsonwebtoken'); } catch (e) {}
+try { require('bcryptjs'); } catch (e) {}
+try { require('xlsx'); } catch (e) {}
+try { require('multer'); } catch (e) {}
 
 let app;
 let initError = null;
@@ -40,4 +52,3 @@ module.exports = (req, res) => {
   }
   return app(req, res);
 };
-
