@@ -5,7 +5,7 @@
   "main": "server/server.js",
   "scripts": {
     "start": "node --no-warnings --experimental-sqlite server/server.js",
-    "build": "npm --prefix client install && npm --prefix client run build",
+    "build": "npm --prefix client install && npm --prefix client run build && node -e \"const fs = require('fs'); fs.cpSync('dist', 'client/dist', {recursive: true, force: true});\"",
     "seed": "node --no-warnings --experimental-sqlite server/db/seed.js"
   },
   "keywords": [

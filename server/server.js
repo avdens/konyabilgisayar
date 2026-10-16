@@ -56,8 +56,12 @@ app.get('/api/health', (req, res) => {
 });
 
 // Serve frontend build if present (for single port local development or monolithic serving)
-const clientDist = path.join(__dirname, '../client/dist');
-if (fs.existsSync(clientDist)) {
+const distCandidates = [
+  path.join(__dirname, '../dist'),
+  path.join(__dirname, '../client/dist')
+];
+const clientDist = distCandidates.find(d => fs.existsSync(d));
+if (clientDist) {
   app.use(express.static(clientDist));
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
